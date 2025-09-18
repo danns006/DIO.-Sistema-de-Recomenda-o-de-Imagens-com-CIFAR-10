@@ -1,0 +1,81 @@
+# Instala bibliotecas (se estiver no Colab)
+!pip install torchvision annoy matplotlib --quiet
+
+# Imports
+import os
+import torch
+import torchvision.datasets as datasets
+import torchvision.models as models
+import torchvision.transforms as transforms
+from PIL import Image, UnidentifiedImageError
+from annoy import AnnoyIndex
+import matplotlib.pyplot as plt
+
+# 1. Baixar e salvar imagens do CIFAR-10
+os.makedirs("imagens", exist_ok=True)
+cifar = datasets.CIFAR10(root=".", download=True)
+for i, (img, label) in enumerate(cifar):
+    if i >= 1000:
+        break
+    img.save(f"imagens/img_{i}.jpg")
+print("Imagens salvas com sucesso!")
+
+# 2. Carregar modelo pré-treinado (ResNet-18)
+model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+model = torch.nn.Sequential(*list(model.children())[:-1])
+model.eval()
+
+# 3. Transformação para as imagens
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+])
+
+# 4. Função para extrair vetor
+def extrair_vetor(imagem_path):
+    imagem = Image.open(imagem_path).convert("RGB")
+    tensor = transform(imagem).unsqueeze(0)
+    with torch.no_grad():
+        vetor = model(tensor).squeeze().numpy()
+    return vetor
+
+# 5. Criar índice Annoy
+vetores = []
+nomes = []
+dim = 512
+index = AnnoyIndex(dim, 'euclidean')
+arquivos = sorted([f for f in os.listdir("imagens") if f.endswith(".jpg")])
+
+for i, nome in enumerate(arquivos):
+    caminho = os.path.join("imagens", nome)
+    try:
+        if not os.path.isfile(caminho):
+            continue
+        vetor = extrair_vetor(caminho)
+        index.add_item(i, vetor)
+        vetores.append(vetor)
+        nomes.append(caminho)
+    except (UnidentifiedImageError, Exception) as e:
+        print(f"Erro ao processar: {nome} → {e}")
+
+index.build(10)
+index.save("indice.ann")
+print("Índice criado e salvo com sucesso!")
+
+# 6. Função para mostrar imagens similares
+def mostrar_similares(imagem_path, k=5):
+    vetor_consulta = extrair_vetor(imagem_path)
+    index.load("indice.ann")
+    similares = index.get_nns_by_vector(vetor_consulta, k)
+
+    plt.figure(figsize=(15, 5))
+    for i, idx in enumerate(similares):
+        img = Image.open(nomes[idx])
+        plt.subplot(1, k, i+1)
+        plt.imshow(img)
+        plt.axis("off")
+        plt.title(f"Similar {i+1}")
+    plt.show()
+
+# 7. Exemplo de uso
+mostrar_similares("imagens/img_111.jpg")  # ou qualquer nome que apareceu na pasta
